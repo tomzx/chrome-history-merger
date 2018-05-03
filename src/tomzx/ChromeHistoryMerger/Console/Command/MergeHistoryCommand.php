@@ -16,7 +16,12 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class MergeHistoryCommand extends Command
 {
-    public function configure()
+    /**
+     * @var \Symfony\Component\Console\Output\OutputInterface
+     */
+    private $output;
+
+    public function configure(): void
     {
         $this
             ->setName('merge-history')
@@ -27,8 +32,10 @@ class MergeHistoryCommand extends Command
             ]);
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $this->output = $output;
+
         $outputFile = $input->getArgument('output');
         $inputFiles = $input->getArgument('files');
 
@@ -36,20 +43,20 @@ class MergeHistoryCommand extends Command
         $restOfFiles = array_slice($inputFiles, 1);
 
         if ( ! $this->checkFileIsSqlite($firstFile)) {
-            $output->writeln('<error>File ' . $firstFile . ' is not a valid SQLite file.</error>');
-            return;
+            $this->output->writeln('<error>File ' . $firstFile . ' is not a valid SQLite file.</error>');
+            return 1;
         }
 
-        $output->writeln('Copying first file (' . $firstFile . ') to serve as initial output...');
+        $this->output->writeln('Copying first file (' . $firstFile . ') to serve as initial output...');
         $this->copyFirstFileToOutput($outputFile, $firstFile);
 
         $outputDatabase = $this->createDatabaseConnection($outputFile);
 
         foreach ($restOfFiles as $file) {
-            $output->writeln('Merging ' . $file . ' in output file...');
+            $this->output->writeln('Merging ' . $file . ' in output file...');
 
             if (!$this->checkFileIsSqlite($file)) {
-                $output->writeln('<error>File ' . $file . ' is not a valid SQLite file, skipped.</error>');
+                $this->output->writeln('<error>File ' . $file . ' is not a valid SQLite file, skipped.</error>');
                 continue;
             }
 
@@ -58,7 +65,9 @@ class MergeHistoryCommand extends Command
             $this->mergeDatabase($outputDatabase, $inputDatabase);
         }
 
-        $output->writeln('Done.');
+        $this->output->writeln('Done.');
+
+        return 0;
     }
 
     private function copyFirstFileToOutput(string $outputFile, string $inputFile): void
@@ -69,7 +78,7 @@ class MergeHistoryCommand extends Command
     private function mergeDatabase(Connection $outputDB, Connection $inputDB): void
     {
         $tables = [
-            'downloads',
+            //'downloads', // there are some issues with the hash/blobs
             'downloads_url_chains',
             // 'keyword_search_terms', // does not have a PK
             // 'meta', // PK is not id
@@ -81,6 +90,7 @@ class MergeHistoryCommand extends Command
         ];
 
         foreach ($tables as $tableName) {
+            $this->output->writeln('Table ' . $tableName);
             $this->transferTableData($tableName, $inputDB, $outputDB);
         }
     }
@@ -93,9 +103,11 @@ class MergeHistoryCommand extends Command
             ->first()['id'];
 
         $inputDB->table($tableName)->where('id', '>', $lastInsertedId)->orderBy('id')->chunk(100, function (Collection $data) use ($outputDB, $tableName) {
-            echo '.';
+            $this->output->write('.');
             $outputDB->table($tableName)->insert($data->all());
         });
+
+        $this->output->writeln('');
     }
 
     private function checkFileIsSqlite(string $file): bool
